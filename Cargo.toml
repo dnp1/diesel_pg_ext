@@ -1,0 +1,10 @@
+[package]
+name = "diesel_pg_ext"
+version = "0.1.0"
+edition = "2024"
+description = "PostgreSQL-specific diesel SQL function extensions"
+
+[dependencies]
+diesel = { version = "~2.3.7", features = ["postgres"] }
+
+
