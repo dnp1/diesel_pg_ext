@@ -119,10 +119,6 @@ macro_rules! define_ordered_aggregate_2_args {
 }
 
 // 1-arg aggregates
-define_ordered_aggregate!(array_agg, ArrayAgg, ArrayAggOrdered, ArrayAggDistinct, ArrayAggDistinctOrdered, "array_agg", diesel::sql_types::Nullable<diesel::sql_types::Array<E::SqlType>>);
-define_ordered_aggregate!(json_agg, JsonAgg, JsonAggOrdered, JsonAggDistinct, JsonAggDistinctOrdered, "json_agg", diesel::sql_types::Nullable<diesel::sql_types::Json>);
-define_ordered_aggregate!(jsonb_agg, JsonAgg, JsonAggOrdered, JsonAggDistinct, JsonAggDistinctOrdered, "json_agg", diesel::sql_types::Nullable<diesel::sql_types::Json>);
+use diesel::sql_types::{Array, Bool, Json, Jsonb, Nullable, Text};
 
-// 2-arg aggregates
-define_ordered_aggregate_2_args!(string_agg, StringAgg, StringAggOrdered, "string_agg", diesel::sql_types::Nullable<diesel::sql_types::Text>);
-define_ordered_aggregate_2_args!(json_object_agg, JsonObjectAgg, JsonObjectAggOrdered, "json_object_agg", diesel::sql_types::Nullable<diesel::sql_types::Json>);
+// ── 1-Arg Aggregates ─────────────────────────────────────────────────────────
