@@ -6,10 +6,11 @@ use diesel::pg::Pg;
 use diesel::prelude::*;
 use diesel::query_builder::QueryFragment;
 use diesel::select;
-use diesel::sql_types::Text;
+use diesel::sql_types::{Array, Double, Text};
 use diesel_pg_ext::{
-    any_value, array_agg, bool_or, current_row, json_agg, json_build_object_kv, json_object_agg,
-    jsonb_agg, jsonb_object_agg, preceding, string_agg,
+    any_value, array_agg, bool_or, current_row, following, json_agg, json_build_object_kv,
+    json_object_agg, jsonb_agg, jsonb_object_agg, mode, percentile_cont, percentile_cont_arr,
+    percentile_disc, percentile_disc_arr, preceding, string_agg, unbounded_preceding,
 };
 
 #[path = "common/schema.rs"]
@@ -35,6 +36,14 @@ fn assert_sql_contains(sql: &str, parts: &[&str]) {
 
 fn text_sql(value: &'static str) -> SqlLiteral<Text> {
     sql::<Text>(value)
+}
+
+fn double_sql(value: &'static str) -> SqlLiteral<Double> {
+    sql::<Double>(value)
+}
+
+fn double_array_sql(value: &'static str) -> SqlLiteral<Array<Double>> {
+    sql::<Array<Double>>(value)
 }
 
 #[test]
@@ -252,6 +261,66 @@ fn string_agg_over_frame_sql() {
             "string_agg(\"posts\".\"title\", ",
             "PARTITION BY \"posts\".\"tenant_id\"",
             "ROWS BETWEEN 4 PRECEDING AND CURRENT ROW",
+        ],
+    );
+}
+
+#[test]
+fn string_agg_over_range_frame_sql() {
+    let query = posts::table.select(
+        string_agg(posts::title, text_sql("', '"))
+            .over()
+            .partition_by(posts::tenant_id)
+            .order_by(posts::view_count)
+            .range_between(preceding(100), current_row()),
+    );
+    let sql = sql_of(&query);
+
+    assert_sql_contains(
+        &sql,
+        &[
+            "string_agg(\"posts\".\"title\", ",
+            "PARTITION BY \"posts\".\"tenant_id\" ORDER BY \"posts\".\"view_count\" RANGE BETWEEN 100 PRECEDING AND CURRENT ROW",
+        ],
+    );
+}
+
+#[test]
+fn array_agg_over_groups_frame_sql() {
+    let query = posts::table.select(
+        array_agg(posts::title)
+            .over()
+            .partition_by(posts::tenant_id)
+            .order_by(posts::title)
+            .groups_between(current_row(), following(1)),
+    );
+    let sql = sql_of(&query);
+
+    assert_sql_contains(
+        &sql,
+        &[
+            "array_agg(\"posts\".\"title\")",
+            "PARTITION BY \"posts\".\"tenant_id\" ORDER BY \"posts\".\"title\" GROUPS BETWEEN CURRENT ROW AND 1 FOLLOWING",
+        ],
+    );
+}
+
+#[test]
+fn json_agg_over_range_unbounded_sql() {
+    let query = posts::table.select(
+        json_agg(posts::title)
+            .over()
+            .partition_by(posts::tenant_id)
+            .order_by(posts::view_count)
+            .range_between(unbounded_preceding(), current_row()),
+    );
+    let sql = sql_of(&query);
+
+    assert_sql_contains(
+        &sql,
+        &[
+            "json_agg(\"posts\".\"title\")",
+            "RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW",
         ],
     );
 }
@@ -503,4 +572,85 @@ fn json_build_object_kv_literal_select_sql() {
     let sql = sql_of(&query);
 
     assert_sql_contains(&sql, &["SELECT json_build_object('status', 'published')", "-- binds: []"]);
+}
+
+#[test]
+fn percentile_disc_scalar_sql() {
+    let query = posts::table.select(percentile_disc(double_sql("0.5")).within_group(posts::view_count));
+    let sql = sql_of(&query);
+
+    assert_sql_contains(
+        &sql,
+        &[
+            "percentile_disc(",
+            "WITHIN GROUP (ORDER BY \"posts\".\"view_count\")",
+            "FROM \"posts\"",
+        ],
+    );
+}
+
+#[test]
+fn percentile_cont_scalar_sql() {
+    let query = posts::table.select(
+        percentile_cont(double_sql("0.5"))
+            .within_group(double_sql("\"posts\".\"view_count\"::double precision")),
+    );
+    let sql = sql_of(&query);
+
+    assert_sql_contains(
+        &sql,
+        &[
+            "percentile_cont(",
+            "WITHIN GROUP (ORDER BY \"posts\".\"view_count\"::double precision)",
+            "FROM \"posts\"",
+        ],
+    );
+}
+
+#[test]
+fn mode_scalar_sql() {
+    let query = posts::table.select(mode().within_group(posts::title));
+    let sql = sql_of(&query);
+
+    assert_sql_contains(
+        &sql,
+        &[
+            "mode() WITHIN GROUP (ORDER BY \"posts\".\"title\")",
+            "FROM \"posts\"",
+        ],
+    );
+}
+
+#[test]
+fn percentile_disc_array_sql() {
+    let query = posts::table.select(
+        percentile_disc_arr(double_array_sql("ARRAY[0.25, 0.5, 0.75]::double precision[]"))
+            .within_group(posts::view_count),
+    );
+    let sql = sql_of(&query);
+
+    assert_sql_contains(
+        &sql,
+        &[
+            "percentile_disc(ARRAY[0.25, 0.5, 0.75]::double precision[])",
+            "WITHIN GROUP (ORDER BY \"posts\".\"view_count\")",
+        ],
+    );
+}
+
+#[test]
+fn percentile_cont_array_sql() {
+    let query = posts::table.select(
+        percentile_cont_arr(double_array_sql("ARRAY[0.25, 0.5, 0.75]::double precision[]"))
+            .within_group(double_sql("\"posts\".\"view_count\"::double precision")),
+    );
+    let sql = sql_of(&query);
+
+    assert_sql_contains(
+        &sql,
+        &[
+            "percentile_cont(ARRAY[0.25, 0.5, 0.75]::double precision[])",
+            "WITHIN GROUP (ORDER BY \"posts\".\"view_count\"::double precision)",
+        ],
+    );
 }

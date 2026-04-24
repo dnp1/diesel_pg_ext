@@ -108,3 +108,158 @@ macro_rules! define_ordered_aggregate_2_args {
         pub fn $fn_name<E1, E2>(expr1: E1, expr2: E2) -> $Base<E1, E2> { $Base { expr1, expr2 } }
     };
 }
+
+#[macro_export]
+macro_rules! define_ordered_set_aggregate {
+    (
+        $fn_name:ident,
+        $Base:ident,
+        $Ordered:ident,
+        $sql_name:literal
+    ) => {
+        #[derive(Debug, Clone, Copy, diesel::query_builder::QueryId)]
+        #[diesel(aggregate)]
+        pub struct $Base<Args> { args: Args }
+
+        #[derive(Debug, Clone, Copy, diesel::query_builder::QueryId)]
+        #[diesel(aggregate)]
+        pub struct $Ordered<Args, O> { args: Args, order: O }
+
+        // ── Type-State Builders ──────────────────────────────────────────────
+        impl<Args> $Base<Args> {
+            /// Converts to `$sql_name(args) WITHIN GROUP (ORDER BY order)`
+            pub fn within_group<O>(self, order: O) -> $Ordered<Args, O> {
+                $Ordered { args: self.args, order }
+            }
+        }
+
+        impl<Args, O> $Ordered<Args, O> {
+            pub fn filter<F>(self, cond: F) -> $crate::FilteredAgg<Self, F> {
+                $crate::FilteredAgg { agg: self, filter: cond }
+            }
+            pub fn over(self) -> $crate::OverClause<Self, $crate::NoSpec, $crate::NoSpec, $crate::NoFrame> {
+                $crate::OverClause { agg: self, partition: $crate::NoSpec, order: $crate::NoSpec, frame: $crate::NoFrame }
+            }
+        }
+
+        // ── Diesel 2.x Traits ────────────────────────────────────────────────
+        // ⚠️ Base intentionally omits `Expression` to prevent invalid SQL like:
+        //    .select(percentile_cont(0.5))  ← Missing WITHIN GROUP (compile error)
+
+        // ✅ Ordered inherits SqlType directly from the ORDER BY column
+        impl<Args, O> diesel::expression::Expression for $Ordered<Args, O>
+        where
+            O: diesel::expression::Expression,
+            O::SqlType: diesel::sql_types::SingleValue,
+        {
+            type SqlType = diesel::sql_types::Nullable<O::SqlType>;
+        }
+
+        impl<Args, O, QS: ?Sized> diesel::expression::AppearsOnTable<QS> for $Ordered<Args, O>
+        where O: diesel::expression::Expression + diesel::expression::AppearsOnTable<QS>,
+              O::SqlType: diesel::sql_types::SingleValue {}
+
+        impl<Args, O, QS: ?Sized> diesel::expression::SelectableExpression<QS> for $Ordered<Args, O>
+        where O: diesel::expression::Expression + diesel::expression::SelectableExpression<QS>,
+              O::SqlType: diesel::sql_types::SingleValue, Self: diesel::expression::AppearsOnTable<QS> {}
+
+        impl<Args, O, GB> diesel::expression::ValidGrouping<GB> for $Ordered<Args, O>
+        where O: diesel::expression::Expression + diesel::expression::ValidGrouping<GB>,
+              O::SqlType: diesel::sql_types::SingleValue,
+        { type IsAggregate = diesel::expression::is_aggregate::Yes; }
+
+        // ── SQL Generation ───────────────────────────────────────────────────
+        impl<Args, O, DB: diesel::backend::Backend> diesel::query_builder::QueryFragment<DB> for $Ordered<Args, O>
+        where Args: diesel::query_builder::QueryFragment<DB>, O: diesel::query_builder::QueryFragment<DB> {
+            fn walk_ast<'b>(&'b self, mut out: diesel::query_builder::AstPass<'_, 'b, DB>) -> diesel::QueryResult<()> {
+                out.push_sql(concat!($sql_name, "("));
+                self.args.walk_ast(out.reborrow())?;
+                out.push_sql(") WITHIN GROUP (ORDER BY ");
+                self.order.walk_ast(out.reborrow())?;
+                out.push_sql(")");
+                Ok(())
+            }
+        }
+
+        /// Creates a `$sql_name(args)` expression. Call `.within_group(order)` to complete it.
+        pub fn $fn_name<Args>(args: Args) -> $Base<Args> {
+            $Base { args }
+        }
+    };
+}
+
+
+#[macro_export]
+macro_rules! define_ordered_set_aggregate_array {
+    (
+        $fn_name:ident,
+        $Base:ident,
+        $Ordered:ident,
+        $sql_name:literal
+    ) => {
+        #[derive(Debug, Clone, Copy, diesel::query_builder::QueryId)]
+        #[diesel(aggregate)]
+        pub struct $Base<Args> { args: Args }
+
+        #[derive(Debug, Clone, Copy, diesel::query_builder::QueryId)]
+        #[diesel(aggregate)]
+        pub struct $Ordered<Args, O> { args: Args, order: O }
+
+        // ── Type-State Builders ──────────────────────────────────────────────
+        impl<Args> $Base<Args> {
+            pub fn within_group<O>(self, order: O) -> $Ordered<Args, O> {
+                $Ordered { args: self.args, order }
+            }
+        }
+
+        impl<Args, O> $Ordered<Args, O> {
+            pub fn filter<F>(self, cond: F) -> $crate::FilteredAgg<Self, F> {
+                $crate::FilteredAgg { agg: self, filter: cond }
+            }
+            pub fn over(self) -> $crate::OverClause<Self, $crate::NoSpec, $crate::NoSpec, $crate::NoFrame> {
+                $crate::OverClause { agg: self, partition: $crate::NoSpec, order: $crate::NoSpec, frame: $crate::NoFrame }
+            }
+        }
+
+        // ── Diesel 2.x Traits ────────────────────────────────────────────────
+        // ✅ KEY DIFFERENCE: Returns Nullable<Array<O::SqlType>>
+        impl<Args, O> diesel::expression::Expression for $Ordered<Args, O>
+        where
+            O: diesel::expression::Expression,
+            O::SqlType: diesel::sql_types::SingleValue,
+        {
+            type SqlType = diesel::sql_types::Nullable<diesel::sql_types::Array<O::SqlType>>;
+        }
+
+        impl<Args, O, QS: ?Sized> diesel::expression::AppearsOnTable<QS> for $Ordered<Args, O>
+        where O: diesel::expression::Expression + diesel::expression::AppearsOnTable<QS>,
+              O::SqlType: diesel::sql_types::SingleValue {}
+
+        impl<Args, O, QS: ?Sized> diesel::expression::SelectableExpression<QS> for $Ordered<Args, O>
+        where O: diesel::expression::Expression + diesel::expression::SelectableExpression<QS>,
+              O::SqlType: diesel::sql_types::SingleValue, Self: diesel::expression::AppearsOnTable<QS> {}
+
+        impl<Args, O, GB> diesel::expression::ValidGrouping<GB> for $Ordered<Args, O>
+        where O: diesel::expression::Expression + diesel::expression::ValidGrouping<GB>,
+              O::SqlType: diesel::sql_types::SingleValue,
+        { type IsAggregate = diesel::expression::is_aggregate::Yes; }
+
+        // ── SQL Generation ───────────────────────────────────────────────────
+        impl<Args, O, DB: diesel::backend::Backend> diesel::query_builder::QueryFragment<DB> for $Ordered<Args, O>
+        where Args: diesel::query_builder::QueryFragment<DB>, O: diesel::query_builder::QueryFragment<DB> {
+            fn walk_ast<'b>(&'b self, mut out: diesel::query_builder::AstPass<'_, 'b, DB>) -> diesel::QueryResult<()> {
+                out.push_sql(concat!($sql_name, "("));
+                self.args.walk_ast(out.reborrow())?;
+                out.push_sql(") WITHIN GROUP (ORDER BY ");
+                self.order.walk_ast(out.reborrow())?;
+                out.push_sql(")");
+                Ok(())
+            }
+        }
+
+        /// Creates a `$sql_name(fraction[])` expression. Call `.within_group(order)` to complete it.
+        pub fn $fn_name<Args>(args: Args) -> $Base<Args> {
+            $Base { args }
+        }
+    };
+}

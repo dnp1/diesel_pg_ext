@@ -7,11 +7,12 @@ use db::get_db;
 use diesel::dsl::sql;
 use diesel::expression_methods::ExpressionMethods;
 use diesel::prelude::*;
-use diesel::sql_types::{Text, Timestamptz};
+use diesel::sql_types::{Array, Double, Text, Timestamptz};
 use diesel_async::RunQueryDsl;
 use diesel_pg_ext::{
     any_value, array_agg, bool_or, current_row, json_agg, json_build_object_kv, jsonb_object_agg,
-    preceding, string_agg,
+    mode, percentile_cont, percentile_cont_arr, percentile_disc, percentile_disc_arr, preceding,
+    string_agg,
 };
 use schema::posts;
 use serde_json::{Value, json};
@@ -28,6 +29,14 @@ fn text_sql(value: &'static str) -> diesel::expression::SqlLiteral<Text> {
 
 fn timestamptz_sql(value: &'static str) -> diesel::expression::SqlLiteral<Timestamptz> {
     sql::<Timestamptz>(value)
+}
+
+fn double_sql(value: &'static str) -> diesel::expression::SqlLiteral<Double> {
+    sql::<Double>(value)
+}
+
+fn double_array_sql(value: &'static str) -> diesel::expression::SqlLiteral<Array<Double>> {
+    sql::<Array<Double>>(value)
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -204,4 +213,154 @@ async fn json_build_object_and_window_aggregate_run_through_diesel_async() {
             ),
         ]
     );
+
+    let range_titles = posts::table
+        .filter(posts::tenant_id.eq(TENANT_A))
+        .filter(posts::category_id.eq(CATEGORY_2))
+        .order_by(posts::view_count.asc())
+        .select((
+            posts::title,
+            array_agg(posts::title)
+                .over()
+                .partition_by(posts::category_id)
+                .order_by(posts::view_count)
+                .range_between(preceding(100), current_row()),
+        ))
+        .load::<(String, Option<Vec<String>>)>(&mut conn)
+        .await
+        .expect("range window query should succeed");
+
+    assert_eq!(
+        range_titles,
+        vec![
+            (
+                "Category 2 Post A".to_string(),
+                Some(vec!["Category 2 Post A".to_string()])
+            ),
+            (
+                "Category 2 Post B".to_string(),
+                Some(vec![
+                    "Category 2 Post A".to_string(),
+                    "Category 2 Post B".to_string()
+                ])
+            ),
+        ]
+    );
+
+    let groups_titles = posts::table
+        .filter(posts::tenant_id.eq(TENANT_A))
+        .filter(posts::category_id.eq(CATEGORY_2))
+        .order_by(posts::created_at.asc())
+        .select((
+            posts::title,
+            array_agg(posts::title)
+                .over()
+                .partition_by(posts::category_id)
+                .order_by(posts::created_at)
+                .groups_between(preceding(1), current_row()),
+        ))
+        .load::<(String, Option<Vec<String>>)>(&mut conn)
+        .await
+        .expect("groups window query should succeed");
+
+    assert_eq!(
+        groups_titles,
+        vec![
+            (
+                "Category 2 Post A".to_string(),
+                Some(vec!["Category 2 Post A".to_string()])
+            ),
+            (
+                "Category 2 Post B".to_string(),
+                Some(vec![
+                    "Category 2 Post A".to_string(),
+                    "Category 2 Post B".to_string()
+                ])
+            ),
+        ]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ordered_set_scalar_functions_execute_against_real_rows() {
+    let db = get_db().await;
+    let pool = db.pool();
+    let mut conn = pool
+        .get()
+        .await
+        .expect("expected a pooled PostgreSQL connection");
+
+    let median_disc = posts::table
+        .filter(posts::tenant_id.eq(TENANT_A))
+        .filter(posts::category_id.eq(CATEGORY_1))
+        .select(percentile_disc(double_sql("0.5")).within_group(posts::view_count))
+        .get_result::<Option<i32>>(&mut conn)
+        .await
+        .expect("percentile_disc query should succeed");
+
+    assert_eq!(median_disc, Some(89));
+
+    let median_cont = posts::table
+        .filter(posts::tenant_id.eq(TENANT_A))
+        .filter(posts::category_id.eq(CATEGORY_1))
+        .select(
+            percentile_cont(double_sql("0.5"))
+                .within_group(double_sql("\"posts\".\"view_count\"::double precision")),
+        )
+        .get_result::<Option<f64>>(&mut conn)
+        .await
+        .expect("percentile_cont query should succeed");
+
+    let median_cont = median_cont.expect("percentile_cont should return a value");
+    assert!((median_cont - 119.5).abs() < f64::EPSILON);
+
+    let modal_title = posts::table
+        .filter(posts::tenant_id.eq(TENANT_A))
+        .filter(posts::category_id.eq(CATEGORY_1))
+        .select(mode().within_group(posts::title))
+        .get_result::<Option<String>>(&mut conn)
+        .await
+        .expect("mode query should succeed");
+
+    assert_eq!(modal_title.as_deref(), Some("Getting Started with Rust"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ordered_set_array_functions_execute_against_real_rows() {
+    let db = get_db().await;
+    let pool = db.pool();
+    let mut conn = pool
+        .get()
+        .await
+        .expect("expected a pooled PostgreSQL connection");
+
+    let discrete_percentiles = posts::table
+        .filter(posts::tenant_id.eq(TENANT_A))
+        .filter(posts::category_id.eq(CATEGORY_1))
+        .select(
+            percentile_disc_arr(double_array_sql("ARRAY[0.25, 0.5, 0.75]::double precision[]"))
+                .within_group(posts::view_count),
+        )
+        .get_result::<Option<Vec<i32>>>(&mut conn)
+        .await
+        .expect("percentile_disc_arr query should succeed");
+
+    assert_eq!(discrete_percentiles, Some(vec![12, 89, 210]));
+
+    let continuous_percentiles = posts::table
+        .filter(posts::tenant_id.eq(TENANT_A))
+        .filter(posts::category_id.eq(CATEGORY_1))
+        .select(
+            percentile_cont_arr(double_array_sql("ARRAY[0.25, 0.5, 0.75]::double precision[]"))
+                .within_group(double_sql("\"posts\".\"view_count\"::double precision")),
+        )
+        .get_result::<Option<Vec<f64>>>(&mut conn)
+        .await
+        .expect("percentile_cont_arr query should succeed")
+        .expect("percentile_cont_arr should return values");
+
+    assert_eq!(continuous_percentiles.len(), 3);
+    assert!((continuous_percentiles[0] - 61.5).abs() < f64::EPSILON);
+    assert!((continuous_percentiles[1] - 119.5).abs() < f64::EPSILON);
+    assert!((continuous_percentiles[2] - 237.5).abs() < f64::EPSILON);
 }
