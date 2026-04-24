@@ -1,8 +1,13 @@
 [package]
 name = "diesel_pg_ext"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "PostgreSQL-specific diesel SQL function extensions"
+license = "MIT"
+repository = "https://github.com/dnp1/diesel_pg_ext"
+keywords = ["database"]
+categories = ["database"]
+authors = ["developer@danilo.info"]
 
 [dependencies]
 diesel = { version = "~2.3.7", features = ["postgres", "serde_json", "uuid"] }
