@@ -1,6 +1,11 @@
+/// Defines a standard ordered aggregate function (e.g., `array_agg`).
+///
+/// This macro generates the base aggregate struct and its variants for `DISTINCT`
+/// and `ORDER BY`, along with helper methods for `.filter()` and `.over()`.
 #[macro_export]
 macro_rules! define_ordered_aggregate {
     (
+        $(#[$meta:meta])*
         $fn_name:ident, $Base:ident, $Ordered:ident, $Distinct:ident, $DistinctOrdered:ident,
         $sql_name:literal, $ret_type:ty
     ) => {
@@ -64,14 +69,16 @@ macro_rules! define_ordered_aggregate {
         impl<E, O, DB: Backend> QueryFragment<DB> for $DistinctOrdered<E, O> where E: QueryFragment<DB>, O: QueryFragment<DB> {
             fn walk_ast<'b>(&'b self, mut out: AstPass<'_, 'b, DB>) -> QueryResult<()> { out.push_sql(concat!($sql_name, "(DISTINCT ")); self.expr.walk_ast(out.reborrow())?; out.push_sql(" ORDER BY "); self.order.walk_ast(out.reborrow())?; out.push_sql(")"); Ok(()) } }
 
-        /// `pub fn $fn_name(expr) -> $Base<expr>`
+        $(#[$meta])*
         pub fn $fn_name<E>(expr: E) -> $Base<E> { $Base { expr } }
     };
 }
 
+/// Defines a 2-argument ordered aggregate function (e.g., `string_agg`).
 #[macro_export]
 macro_rules! define_ordered_aggregate_2_args {
     (
+        $(#[$meta:meta])*
         $fn_name:ident, $Base:ident, $Ordered:ident,
         $sql_name:literal, $ret_type:ty
     ) => {
@@ -105,13 +112,18 @@ macro_rules! define_ordered_aggregate_2_args {
         impl<E1, E2, O, DB: Backend> QueryFragment<DB> for $Ordered<E1, E2, O> where E1: QueryFragment<DB>, E2: QueryFragment<DB>, O: QueryFragment<DB> {
             fn walk_ast<'b>(&'b self, mut out: AstPass<'_, 'b, DB>) -> QueryResult<()> { out.push_sql(concat!($sql_name, "(")); self.expr1.walk_ast(out.reborrow())?; out.push_sql(", "); self.expr2.walk_ast(out.reborrow())?; out.push_sql(" ORDER BY "); self.order.walk_ast(out.reborrow())?; out.push_sql(")"); Ok(()) } }
 
+        $(#[$meta])*
         pub fn $fn_name<E1, E2>(expr1: E1, expr2: E2) -> $Base<E1, E2> { $Base { expr1, expr2 } }
     };
 }
 
+/// Defines an ordered-set aggregate function (e.g., `percentile_cont`).
+///
+/// These functions use the `WITHIN GROUP (ORDER BY ...)` syntax.
 #[macro_export]
 macro_rules! define_ordered_set_aggregate {
     (
+        $(#[$meta:meta])*
         $fn_name:ident,
         $Base:ident,
         $Ordered:ident,
@@ -181,7 +193,7 @@ macro_rules! define_ordered_set_aggregate {
             }
         }
 
-        /// Creates a `$sql_name(args)` expression. Call `.within_group(order)` to complete it.
+        $(#[$meta])*
         pub fn $fn_name<Args>(args: Args) -> $Base<Args> {
             $Base { args }
         }
@@ -189,9 +201,11 @@ macro_rules! define_ordered_set_aggregate {
 }
 
 
+/// Defines an ordered-set aggregate function that returns an array (e.g., `percentile_cont` with an array of fractions).
 #[macro_export]
 macro_rules! define_ordered_set_aggregate_array {
     (
+        $(#[$meta:meta])*
         $fn_name:ident,
         $Base:ident,
         $Ordered:ident,
@@ -257,7 +271,7 @@ macro_rules! define_ordered_set_aggregate_array {
             }
         }
 
-        /// Creates a `$sql_name(fraction[])` expression. Call `.within_group(order)` to complete it.
+        $(#[$meta])*
         pub fn $fn_name<Args>(args: Args) -> $Base<Args> {
             $Base { args }
         }

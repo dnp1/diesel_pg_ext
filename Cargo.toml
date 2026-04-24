@@ -1,6 +1,6 @@
 [package]
 name = "diesel_pg_ext"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 description = "PostgreSQL-specific diesel SQL function extensions"
 license = "MIT"
