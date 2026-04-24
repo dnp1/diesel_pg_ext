@@ -1,13 +1,13 @@
 use diesel::backend::Backend;
 use diesel::expression::{AppearsOnTable, Expression, SelectableExpression, ValidGrouping, is_aggregate};
-use diesel::query_builder::{AstPass, QueryFragment, QueryId};
-use diesel::sql_types::SingleValue;
+use diesel::query_builder::QueryId;
+use diesel::query_builder::{AstPass, QueryFragment};
 use diesel::QueryResult;
 
 // ── Window & Filter Helpers ──────────────────────────────────────────────────
-#[derive(Debug, Clone, Copy)] pub struct NoSpec;
-#[derive(Debug, Clone, Copy)] pub struct Partition<P>(pub P);
-#[derive(Debug, Clone, Copy)] pub struct WindowOrder<O>(pub O);
+#[derive(Debug, Clone, Copy, diesel::query_builder::QueryId)] pub struct NoSpec;
+#[derive(Debug, Clone, Copy, diesel::query_builder::QueryId)] pub struct Partition<P>(pub P);
+#[derive(Debug, Clone, Copy, diesel::query_builder::QueryId)] pub struct WindowOrder<O>(pub O);
 pub trait WindowPart {}
 impl WindowPart for NoSpec {}
 impl<P> WindowPart for Partition<P> {}
@@ -23,6 +23,10 @@ impl<Agg, F> FilteredAgg<Agg, F> {
 }
 
 impl<Agg, F> Expression for FilteredAgg<Agg, F> where Agg: Expression { type SqlType = Agg::SqlType; }
+impl<Agg, F> QueryId for FilteredAgg<Agg, F> {
+    type QueryId = ();
+    const HAS_STATIC_QUERY_ID: bool = false;
+}
 impl<Agg, F, QS: ?Sized> AppearsOnTable<QS> for FilteredAgg<Agg, F> where Agg: AppearsOnTable<QS>, F: AppearsOnTable<QS> {}
 impl<Agg, F, QS: ?Sized> SelectableExpression<QS> for FilteredAgg<Agg, F> where Agg: SelectableExpression<QS>, F: SelectableExpression<QS>, Self: AppearsOnTable<QS> {}
 impl<Agg, F, GB> ValidGrouping<GB> for FilteredAgg<Agg, F> { type IsAggregate = is_aggregate::Yes; }
@@ -38,15 +42,15 @@ where Agg: QueryFragment<DB>, F: QueryFragment<DB> {
 }
 
 // ── Frame Helpers ────────────────────────────────────────────────────────────
-#[derive(Debug, Clone, Copy)] pub struct NoFrame;
+#[derive(Debug, Clone, Copy, diesel::query_builder::QueryId)] pub struct NoFrame;
 pub trait FrameSpec {}
 impl FrameSpec for NoFrame {}
 
-#[derive(Debug, Clone, Copy)] pub struct UnboundedPreceding;
-#[derive(Debug, Clone, Copy)] pub struct NPreceding(pub i64);
-#[derive(Debug, Clone, Copy)] pub struct CurrentRow;
-#[derive(Debug, Clone, Copy)] pub struct NFollowing(pub i64);
-#[derive(Debug, Clone, Copy)] pub struct UnboundedFollowing;
+#[derive(Debug, Clone, Copy, diesel::query_builder::QueryId)] pub struct UnboundedPreceding;
+#[derive(Debug, Clone, Copy, diesel::query_builder::QueryId)] pub struct NPreceding(pub i64);
+#[derive(Debug, Clone, Copy, diesel::query_builder::QueryId)] pub struct CurrentRow;
+#[derive(Debug, Clone, Copy, diesel::query_builder::QueryId)] pub struct NFollowing(pub i64);
+#[derive(Debug, Clone, Copy, diesel::query_builder::QueryId)] pub struct UnboundedFollowing;
 pub trait FrameBound {}
 impl FrameBound for UnboundedPreceding {}
 impl FrameBound for NPreceding {}
@@ -67,6 +71,18 @@ pub fn unbounded_following() -> UnboundedFollowing { UnboundedFollowing }
 impl<S: FrameBound, E: FrameBound> FrameSpec for RowsFrame<S, E> {}
 impl<S: FrameBound, E: FrameBound> FrameSpec for RangeFrame<S, E> {}
 impl<S: FrameBound, E: FrameBound> FrameSpec for GroupsFrame<S, E> {}
+impl<S: FrameBound, E: FrameBound> QueryId for RowsFrame<S, E> {
+    type QueryId = ();
+    const HAS_STATIC_QUERY_ID: bool = false;
+}
+impl<S: FrameBound, E: FrameBound> QueryId for RangeFrame<S, E> {
+    type QueryId = ();
+    const HAS_STATIC_QUERY_ID: bool = false;
+}
+impl<S: FrameBound, E: FrameBound> QueryId for GroupsFrame<S, E> {
+    type QueryId = ();
+    const HAS_STATIC_QUERY_ID: bool = false;
+}
 
 pub fn rows_between<S: FrameBound, E: FrameBound>(start: S, end: E) -> RowsFrame<S, E> { RowsFrame { start, end } }
 pub fn range_between<S: FrameBound, E: FrameBound>(start: S, end: E) -> RangeFrame<S, E> { RangeFrame { start, end } }
@@ -88,10 +104,10 @@ impl<S: FrameBound, E: FrameBound, DB: Backend> QueryFragment<DB> for GroupsFram
 // ── OverClause (4 params: Agg, P, O, F) ─────────────────────────────────────
 #[derive(Debug, Clone, Copy)]
 pub struct OverClause<Agg, P, O, F> {
-    agg: Agg,
-    partition: P,
-    order: O,
-    frame: F,
+    pub(crate) agg: Agg,
+    pub(crate) partition: P,
+    pub(crate) order: O,
+    pub(crate) frame: F,
 }
 
 impl<Agg, O> OverClause<Agg, NoSpec, O, NoFrame> {
@@ -107,7 +123,11 @@ impl<Agg, P, O> OverClause<Agg, P, O, NoFrame> {
 }
 
 impl<Agg, P, O, F> Expression for OverClause<Agg, P, O, F> where Agg: Expression { type SqlType = Agg::SqlType; }
-impl<Agg, P, O, F, GB> ValidGrouping<GB> for OverClause<Agg, P, O, F> where Agg: ValidGrouping<GB> { type IsAggregate = is_aggregate::Yes; }
+impl<Agg, P, O, F> QueryId for OverClause<Agg, P, O, F> {
+    type QueryId = ();
+    const HAS_STATIC_QUERY_ID: bool = false;
+}
+impl<Agg, P, O, F, GB> ValidGrouping<GB> for OverClause<Agg, P, O, F> where Agg: ValidGrouping<GB> { type IsAggregate = is_aggregate::No; }
 impl<Agg, P, O, F, QS: ?Sized> AppearsOnTable<QS> for OverClause<Agg, P, O, F> where Agg: AppearsOnTable<QS>, P: WindowPart, O: WindowPart, F: FrameSpec {}
 impl<Agg, P, O, F, QS: ?Sized> SelectableExpression<QS> for OverClause<Agg, P, O, F> where Agg: SelectableExpression<QS>, P: WindowPart, O: WindowPart, F: FrameSpec, Self: AppearsOnTable<QS> {}
 

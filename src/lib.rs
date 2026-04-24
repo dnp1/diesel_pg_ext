@@ -1,5 +1,7 @@
-use diesel::dsl::Nullable;
-use diesel::sql_types::{Array, Bool, Json, Jsonb, SingleValue, Text};
+use diesel::backend::Backend;
+use diesel::query_builder::{AstPass, QueryFragment};
+use diesel::QueryResult;
+use diesel::sql_types::{Array, Bool, Json, Jsonb, Nullable, SingleValue, Text};
 
 
 
@@ -27,6 +29,7 @@ diesel::define_sql_function! {
 
 mod group_aggregate_macros;
 mod group_aggregate_helper;
+pub use group_aggregate_helper::*;
 define_ordered_aggregate!(array_agg, ArrayAgg, ArrayAggOrdered, ArrayAggDistinct, ArrayAggDistinctOrdered, "array_agg", Nullable<Array<E::SqlType>>);
 define_ordered_aggregate!(json_agg, JsonAgg, JsonAggOrdered, JsonAggDistinct, JsonAggDistinctOrdered, "json_agg", Nullable<Json>);
 define_ordered_aggregate!(jsonb_agg, JsonbAgg, JsonbAggOrdered, JsonbAggDistinct, JsonbAggDistinctOrdered, "jsonb_agg", Nullable<Jsonb>);
