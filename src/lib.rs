@@ -17,45 +17,29 @@
 //!
 //! ### Ordered Aggregates
 //!
-//! ```rust
+//! ```rust,no_run
 //! # use diesel::prelude::*;
 //! # use diesel_pg_ext::array_agg;
 //! # diesel::table! { posts { id -> Int4, title -> Text, } }
 //! # fn main() {
-//! #     let mut conn = Page::default();
+//! #     let mut conn = PgConnection::establish("url").unwrap();
 //! posts::table
 //!     .select(array_agg(posts::title).distinct().order_by(posts::title.desc()))
 //!     .get_result::<Option<Vec<String>>>(&mut conn);
-//! # }
-//! # #[derive(Default)] struct Page;
-//! # impl diesel::connection::Connection for Page {
-//! #     type Backend = diesel::pg::Pg;
-//! #     type TransactionManager = diesel::connection::AnsiTransactionManager;
-//! #     fn establish(_: &str) -> ConnectionResult<Self> { todo!() }
-//! #     fn execute_returning_count<T>(&mut self, _: &T) -> QueryResult<usize> { todo!() }
-//! #     fn transaction_state(&mut self) -> &mut Self::TransactionManager { todo!() }
 //! # }
 //! ```
 //!
 //! ### Ordered-Set Aggregates
 //!
-//! ```rust
+//! ```rust,no_run
 //! # use diesel::prelude::*;
 //! # use diesel_pg_ext::mode;
 //! # diesel::table! { posts { id -> Int4, title -> Text, } }
 //! # fn main() {
-//! #     let mut conn = Page::default();
+//! #     let mut conn = PgConnection::establish("url").unwrap();
 //! posts::table
 //!     .select(mode().within_group(posts::title))
 //!     .get_result::<Option<String>>(&mut conn);
-//! # }
-//! # #[derive(Default)] struct Page;
-//! # impl diesel::connection::Connection for Page {
-//! #     type Backend = diesel::pg::Pg;
-//! #     type TransactionManager = diesel::connection::AnsiTransactionManager;
-//! #     fn establish(_: &str) -> ConnectionResult<Self> { todo!() }
-//! #     fn execute_returning_count<T>(&mut self, _: &T) -> QueryResult<usize> { todo!() }
-//! #     fn transaction_state(&mut self) -> &mut Self::TransactionManager { todo!() }
 //! # }
 //! ```
 

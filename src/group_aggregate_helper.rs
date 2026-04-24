@@ -1,6 +1,5 @@
 use diesel::backend::Backend;
 use diesel::expression::{AppearsOnTable, Expression, SelectableExpression, ValidGrouping, is_aggregate};
-use diesel::query_builder::QueryId;
 use diesel::query_builder::{AstPass, QueryFragment};
 use diesel::QueryResult;
 
@@ -16,13 +15,15 @@ use diesel::QueryResult;
 #[derive(Debug, Clone, Copy, diesel::query_builder::QueryId)] pub struct WindowOrder<O>(pub O);
 
 /// Trait for types that can be part of a window specification.
-pub trait WindowPart {}
-impl WindowPart for NoSpec {}
-impl<P> WindowPart for Partition<P> {}
-impl<O> WindowPart for WindowOrder<O> {}
+pub trait WindowPart {
+    fn is_no_spec(&self) -> bool;
+}
+impl WindowPart for NoSpec { fn is_no_spec(&self) -> bool { true } }
+impl<P> WindowPart for Partition<P> { fn is_no_spec(&self) -> bool { false } }
+impl<O> WindowPart for WindowOrder<O> { fn is_no_spec(&self) -> bool { false } }
 
 /// Represents an aggregate function with a `FILTER (WHERE ...)` clause.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, diesel::query_builder::QueryId)]
 pub struct FilteredAgg<Agg, F> {
     /// The base aggregate function.
     pub agg: Agg,
@@ -38,10 +39,6 @@ impl<Agg, F> FilteredAgg<Agg, F> {
 }
 
 impl<Agg, F> Expression for FilteredAgg<Agg, F> where Agg: Expression { type SqlType = Agg::SqlType; }
-impl<Agg, F> QueryId for FilteredAgg<Agg, F> {
-    type QueryId = ();
-    const HAS_STATIC_QUERY_ID: bool = false;
-}
 impl<Agg, F, QS: ?Sized> AppearsOnTable<QS> for FilteredAgg<Agg, F> where Agg: AppearsOnTable<QS>, F: AppearsOnTable<QS> {}
 impl<Agg, F, QS: ?Sized> SelectableExpression<QS> for FilteredAgg<Agg, F> where Agg: SelectableExpression<QS>, F: SelectableExpression<QS>, Self: AppearsOnTable<QS> {}
 impl<Agg, F, GB> ValidGrouping<GB> for FilteredAgg<Agg, F> { type IsAggregate = is_aggregate::Yes; }
@@ -62,8 +59,10 @@ where Agg: QueryFragment<DB>, F: QueryFragment<DB> {
 #[derive(Debug, Clone, Copy, diesel::query_builder::QueryId)] pub struct NoFrame;
 
 /// Trait for window frame specifications.
-pub trait FrameSpec {}
-impl FrameSpec for NoFrame {}
+pub trait FrameSpec {
+    fn is_no_frame(&self) -> bool;
+}
+impl FrameSpec for NoFrame { fn is_no_frame(&self) -> bool { true } }
 
 /// Represents `UNBOUNDED PRECEDING` in a window frame.
 #[derive(Debug, Clone, Copy, diesel::query_builder::QueryId)] pub struct UnboundedPreceding;
@@ -104,29 +103,17 @@ pub fn following(n: i64) -> NFollowing { NFollowing(n) }
 pub fn unbounded_following() -> UnboundedFollowing { UnboundedFollowing }
 
 /// Represents a `ROWS BETWEEN ... AND ...` window frame.
-#[derive(Debug, Clone, Copy)] pub struct RowsFrame<S: FrameBound, E: FrameBound> { pub start: S, pub end: E }
+#[derive(Debug, Clone, Copy, diesel::query_builder::QueryId)] pub struct RowsFrame<S, E> { pub start: S, pub end: E }
 
 /// Represents a `RANGE BETWEEN ... AND ...` window frame.
-#[derive(Debug, Clone, Copy)] pub struct RangeFrame<S: FrameBound, E: FrameBound> { pub start: S, pub end: E }
+#[derive(Debug, Clone, Copy, diesel::query_builder::QueryId)] pub struct RangeFrame<S, E> { pub start: S, pub end: E }
 
 /// Represents a `GROUPS BETWEEN ... AND ...` window frame.
-#[derive(Debug, Clone, Copy)] pub struct GroupsFrame<S: FrameBound, E: FrameBound> { pub start: S, pub end: E }
+#[derive(Debug, Clone, Copy, diesel::query_builder::QueryId)] pub struct GroupsFrame<S, E> { pub start: S, pub end: E }
 
-impl<S: FrameBound, E: FrameBound> FrameSpec for RowsFrame<S, E> {}
-impl<S: FrameBound, E: FrameBound> FrameSpec for RangeFrame<S, E> {}
-impl<S: FrameBound, E: FrameBound> FrameSpec for GroupsFrame<S, E> {}
-impl<S: FrameBound, E: FrameBound> QueryId for RowsFrame<S, E> {
-    type QueryId = ();
-    const HAS_STATIC_QUERY_ID: bool = false;
-}
-impl<S: FrameBound, E: FrameBound> QueryId for RangeFrame<S, E> {
-    type QueryId = ();
-    const HAS_STATIC_QUERY_ID: bool = false;
-}
-impl<S: FrameBound, E: FrameBound> QueryId for GroupsFrame<S, E> {
-    type QueryId = ();
-    const HAS_STATIC_QUERY_ID: bool = false;
-}
+impl<S: FrameBound, E: FrameBound> FrameSpec for RowsFrame<S, E> { fn is_no_frame(&self) -> bool { false } }
+impl<S: FrameBound, E: FrameBound> FrameSpec for RangeFrame<S, E> { fn is_no_frame(&self) -> bool { false } }
+impl<S: FrameBound, E: FrameBound> FrameSpec for GroupsFrame<S, E> { fn is_no_frame(&self) -> bool { false } }
 
 /// Creates a `ROWS BETWEEN ... AND ...` window frame.
 pub fn rows_between<S: FrameBound, E: FrameBound>(start: S, end: E) -> RowsFrame<S, E> { RowsFrame { start, end } }
@@ -143,17 +130,17 @@ impl<DB: Backend> QueryFragment<DB> for CurrentRow { fn walk_ast<'b>(&'b self, m
 impl<DB: Backend> QueryFragment<DB> for NFollowing { fn walk_ast<'b>(&'b self, mut out: AstPass<'_, 'b, DB>) -> QueryResult<()> { out.push_sql(&self.0.to_string()); out.push_sql(" FOLLOWING"); Ok(()) } }
 impl<DB: Backend> QueryFragment<DB> for UnboundedFollowing { fn walk_ast<'b>(&'b self, mut out: AstPass<'_, 'b, DB>) -> QueryResult<()> { out.push_sql("UNBOUNDED FOLLOWING"); Ok(()) } }
 
-impl<S: FrameBound, E: FrameBound, DB: Backend> QueryFragment<DB> for RowsFrame<S, E> where S: QueryFragment<DB>, E: QueryFragment<DB> {
+impl<S, E, DB: Backend> QueryFragment<DB> for RowsFrame<S, E> where S: QueryFragment<DB>, E: QueryFragment<DB> {
     fn walk_ast<'b>(&'b self, mut out: AstPass<'_, 'b, DB>) -> QueryResult<()> { out.push_sql("ROWS BETWEEN "); self.start.walk_ast(out.reborrow())?; out.push_sql(" AND "); self.end.walk_ast(out.reborrow())?; Ok(()) } }
-impl<S: FrameBound, E: FrameBound, DB: Backend> QueryFragment<DB> for RangeFrame<S, E> where S: QueryFragment<DB>, E: QueryFragment<DB> {
+impl<S, E, DB: Backend> QueryFragment<DB> for RangeFrame<S, E> where S: QueryFragment<DB>, E: QueryFragment<DB> {
     fn walk_ast<'b>(&'b self, mut out: AstPass<'_, 'b, DB>) -> QueryResult<()> { out.push_sql("RANGE BETWEEN "); self.start.walk_ast(out.reborrow())?; out.push_sql(" AND "); self.end.walk_ast(out.reborrow())?; Ok(()) } }
-impl<S: FrameBound, E: FrameBound, DB: Backend> QueryFragment<DB> for GroupsFrame<S, E> where S: QueryFragment<DB>, E: QueryFragment<DB> {
+impl<S, E, DB: Backend> QueryFragment<DB> for GroupsFrame<S, E> where S: QueryFragment<DB>, E: QueryFragment<DB> {
     fn walk_ast<'b>(&'b self, mut out: AstPass<'_, 'b, DB>) -> QueryResult<()> { out.push_sql("GROUPS BETWEEN "); self.start.walk_ast(out.reborrow())?; out.push_sql(" AND "); self.end.walk_ast(out.reborrow())?; Ok(()) } }
 
 // ── OverClause (4 params: Agg, P, O, F) ─────────────────────────────────────
 
 /// Represents an aggregate function with an `OVER (...)` clause.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, diesel::query_builder::QueryId)]
 pub struct OverClause<Agg, P, O, F> {
     pub(crate) agg: Agg,
     pub(crate) partition: P,
@@ -179,19 +166,52 @@ impl<Agg, P, O> OverClause<Agg, P, O, NoFrame> {
 }
 
 impl<Agg, P, O, F> Expression for OverClause<Agg, P, O, F> where Agg: Expression { type SqlType = Agg::SqlType; }
-impl<Agg, P, O, F> QueryId for OverClause<Agg, P, O, F> {
-    type QueryId = ();
-    const HAS_STATIC_QUERY_ID: bool = false;
-}
 impl<Agg, P, O, F, GB> ValidGrouping<GB> for OverClause<Agg, P, O, F> where Agg: ValidGrouping<GB> { type IsAggregate = is_aggregate::No; }
 impl<Agg, P, O, F, QS: ?Sized> AppearsOnTable<QS> for OverClause<Agg, P, O, F> where Agg: AppearsOnTable<QS>, P: WindowPart, O: WindowPart, F: FrameSpec {}
 impl<Agg, P, O, F, QS: ?Sized> SelectableExpression<QS> for OverClause<Agg, P, O, F> where Agg: SelectableExpression<QS>, P: WindowPart, O: WindowPart, F: FrameSpec, Self: AppearsOnTable<QS> {}
 
-impl<Agg, F, DB: Backend> QueryFragment<DB> for OverClause<Agg, NoSpec, NoSpec, F> where Agg: QueryFragment<DB>, F: FrameSpec {
-    fn walk_ast<'b>(&'b self, mut out: AstPass<'_, 'b, DB>) -> QueryResult<()> { self.agg.walk_ast(out.reborrow())?; out.push_sql(" OVER ()"); Ok(()) } }
-impl<Agg, P, F, DB: Backend> QueryFragment<DB> for OverClause<Agg, Partition<P>, NoSpec, F> where Agg: QueryFragment<DB>, P: QueryFragment<DB>, F: FrameSpec {
-    fn walk_ast<'b>(&'b self, mut out: AstPass<'_, 'b, DB>) -> QueryResult<()> { self.agg.walk_ast(out.reborrow())?; out.push_sql(" OVER (PARTITION BY "); self.partition.0.walk_ast(out.reborrow())?; out.push_sql(")"); Ok(()) } }
-impl<Agg, O, F, DB: Backend> QueryFragment<DB> for OverClause<Agg, NoSpec, WindowOrder<O>, F> where Agg: QueryFragment<DB>, O: QueryFragment<DB>, F: FrameSpec {
-    fn walk_ast<'b>(&'b self, mut out: AstPass<'_, 'b, DB>) -> QueryResult<()> { self.agg.walk_ast(out.reborrow())?; out.push_sql(" OVER (ORDER BY "); self.order.0.walk_ast(out.reborrow())?; out.push_sql(")"); Ok(()) } }
-impl<Agg, P, O, F, DB: Backend> QueryFragment<DB> for OverClause<Agg, Partition<P>, WindowOrder<O>, F> where Agg: QueryFragment<DB>, P: QueryFragment<DB>, O: QueryFragment<DB>, F: FrameSpec + QueryFragment<DB> {
-    fn walk_ast<'b>(&'b self, mut out: AstPass<'_, 'b, DB>) -> QueryResult<()> { self.agg.walk_ast(out.reborrow())?; out.push_sql(" OVER (PARTITION BY "); self.partition.0.walk_ast(out.reborrow())?; out.push_sql(" ORDER BY "); self.order.0.walk_ast(out.reborrow())?; out.push_sql(" "); self.frame.walk_ast(out.reborrow())?; out.push_sql(")"); Ok(()) } }
+impl<Agg, P, O, F, DB> QueryFragment<DB> for OverClause<Agg, P, O, F>
+where
+    DB: Backend,
+    Agg: QueryFragment<DB>,
+    P: QueryFragment<DB> + WindowPart,
+    O: QueryFragment<DB> + WindowPart,
+    F: QueryFragment<DB> + FrameSpec,
+{
+    fn walk_ast<'b>(&'b self, mut out: AstPass<'_, 'b, DB>) -> QueryResult<()> {
+        self.agg.walk_ast(out.reborrow())?;
+        out.push_sql(" OVER (");
+        let mut has_part = false;
+        if !self.partition.is_no_spec() {
+            out.push_sql("PARTITION BY ");
+            self.partition.walk_ast(out.reborrow())?;
+            has_part = true;
+        }
+        if !self.order.is_no_spec() {
+            if has_part { out.push_sql(" "); }
+            out.push_sql("ORDER BY ");
+            self.order.walk_ast(out.reborrow())?;
+            has_part = true;
+        }
+        if !self.frame.is_no_frame() {
+            if has_part { out.push_sql(" "); }
+            self.frame.walk_ast(out.reborrow())?;
+        }
+        out.push_sql(")");
+        Ok(())
+    }
+}
+
+// Implement QueryFragment for NoSpec and NoFrame so they can be in the generic impl
+impl<DB: Backend> QueryFragment<DB> for NoSpec {
+    fn walk_ast<'b>(&'b self, _out: AstPass<'_, 'b, DB>) -> QueryResult<()> { Ok(()) }
+}
+impl<DB: Backend> QueryFragment<DB> for NoFrame {
+    fn walk_ast<'b>(&'b self, _out: AstPass<'_, 'b, DB>) -> QueryResult<()> { Ok(()) }
+}
+impl<P, DB: Backend> QueryFragment<DB> for Partition<P> where P: QueryFragment<DB> {
+    fn walk_ast<'b>(&'b self, out: AstPass<'_, 'b, DB>) -> QueryResult<()> { self.0.walk_ast(out) }
+}
+impl<O, DB: Backend> QueryFragment<DB> for WindowOrder<O> where O: QueryFragment<DB> {
+    fn walk_ast<'b>(&'b self, out: AstPass<'_, 'b, DB>) -> QueryResult<()> { self.0.walk_ast(out) }
+}
